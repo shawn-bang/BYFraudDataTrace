@@ -14,10 +14,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.charset.Charset;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -46,6 +43,10 @@ public class FraudDataTraceMain {
 		List<String> inputJsons = regexMatcher(content, "(getInputJson\\:)(\\{(.*?)\\}\\})\n");
 		logger.info("log file & request count:{}:{}", fileName, inputJsons.size());
 
+		// init map:just once
+		if (AF1001 == null) AF1001 = new HashMap<>();
+		if (AF1002 == null) AF1002 = new HashMap<>();
+
 		// According to fromflowpoint to slice
 		for (String inputJson : inputJsons) {
 			JSONObject whole = JSON.parseObject(inputJson);
@@ -59,6 +60,18 @@ public class FraudDataTraceMain {
 				logger.info("Can't found fromflowpoint:{}", point);
 			}
 		}
+
+		// send http message to target web server url: priority first AF1001, second AF1002
+		int singleTotalCount = 0, singleSuccessCount = 0, singleFailCount = 0;
+		doRequestService(AF1001, singleTotalCount, singleSuccessCount, singleFailCount);
+		doRequestService(AF1002, singleTotalCount, singleSuccessCount, singleFailCount);
+		logger.info("{}:Total request count:{}", fileName, singleTotalCount);
+		logger.info("{}:Success request count:{}", fileName, singleSuccessCount);
+		logger.info("{}:Fail request count:{}", fileName, singleFailCount);
+
+		// clear map
+		AF1001.clear();
+		AF1002.clear();
 	}
 
 	/**
@@ -93,9 +106,6 @@ public class FraudDataTraceMain {
 			}
 		}
 
-		// send http message to target web server url: priority first AF1001, second AF1002
-		doRequestService(AF1001);
-		doRequestService(AF1002);
 		logger.info("Total request count:{}", totalCount);
 		logger.info("Success request count:{}", successCount);
 		logger.info("Fail request count:{}", failCount);
@@ -105,15 +115,15 @@ public class FraudDataTraceMain {
 	 * request target service and count
 	 * @param map
 	 */
-	private static void doRequestService(Map<String, String> map) {
+	private static void doRequestService(Map<String, String> map, int tcount, int scount, int fcount) {
 		for (Map.Entry<String, String> entry : map.entrySet()) {
-			totalCount++;
+			tcount++;totalCount++;
 			String appId = entry.getKey();
 			String json = entry.getValue();
 			if (httpPostWithJson(json, appId)) {
-				successCount++;
+				scount++;successCount++;
 			}else {
-				failCount++;
+				fcount++;failCount++;
 			}
 		}
 	}
