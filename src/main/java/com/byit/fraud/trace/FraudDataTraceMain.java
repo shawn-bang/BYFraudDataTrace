@@ -14,10 +14,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.charset.Charset;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -44,21 +41,31 @@ public class FraudDataTraceMain {
 	private static void traceSingleLogFile(String fileName, String content){
 		// 使用正则表达式按日志记录时间顺序提取请求json报文
 		List<String> inputJsons = regexMatcher(content, "(getInputJson\\:)(\\{(.*?)\\}\\})\n");
-		logger.info("log file & request count:{}:{}", fileName, inputJsons.size());
+		logger.info("{}:request count:{}:{}", fileName, inputJsons.size());
+
+		// init map:just once
+		if (AF1001 == null) AF1001 = new HashMap<>();
+		if (AF1002 == null) AF1002 = new HashMap<>();
 
 		// According to fromflowpoint to slice
+		int count1001 = 0, count1002 = 0;
 		for (String inputJson : inputJsons) {
 			JSONObject whole = JSON.parseObject(inputJson);
 			String appId = whole.getJSONArray("applicants").getJSONObject(0).getJSONObject("applicantinfo").getString("app_id");
 			String point = whole.getJSONObject("requestdesc").getString("fromflowpoint");
 			if (point.equals(AppReqNumEnum.AF1001.name())) {
 				AF1001.put(appId, inputJson);
+				count1001++;
 			}else if (point.equals(AppReqNumEnum.AF1002.name())){
 				AF1002.put(appId, inputJson);
+				count1002++;
 			}else {
 				logger.info("Can't found fromflowpoint:{}", point);
 			}
 		}
+
+		logger.info("{}:count AF1001:{}", fileName, count1001);
+		logger.info("{}:count AF1002:{}", fileName, count1002);
 	}
 
 	/**
