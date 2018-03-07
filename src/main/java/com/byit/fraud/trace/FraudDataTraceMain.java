@@ -60,12 +60,12 @@ public class FraudDataTraceMain {
 				AF1002.put(appId, inputJson);
 				count1002++;
 			}else {
-				logger.info("Can't found fromflowpoint:{}", point);
+				logger.info("{}:Can't found fromflowpoint:{}", fileName, point);
 			}
 		}
 
-		logger.info("{}:count AF1001:{}", fileName, count1001);
-		logger.info("{}:count AF1002:{}", fileName, count1002);
+		logger.info("{}:Count AF1001:{}", fileName, count1001);
+		logger.info("{}:Count AF1002:{}", fileName, count1002);
 	}
 
 	/**
@@ -94,9 +94,9 @@ public class FraudDataTraceMain {
 				}
 
 				traceSingleLogFile(fileName, content.toString());
-				logger.info("read log file end:{}", fileName);
+				logger.info("Read log file end:{}", fileName);
 			} catch (Exception e) {
-				logger.error("read log file error", e);
+				logger.error("Read log file error", e);
 			}
 		}
 
@@ -185,21 +185,21 @@ public class FraudDataTraceMain {
 			// check response result status:1-success, 0-fail
 			int statusCode = response.getStatusLine().getStatusCode();
 			if(statusCode != HttpStatus.SC_OK){
-				logger.warn("response status exception:{}:{}", appId, statusCode);
+				logger.warn("Response status exception:{}:{}", appId, statusCode);
 				flag = false;
 			}else {
 				String responseJson = response.getEntity().toString();
 				String status = JSON.parseObject(responseJson).getJSONObject("response").getString("status");
 				if (!status.equals("1")) {
-					logger.warn("response result status exception:{}:{}", appId, responseJson);
+					logger.warn("Response result status exception:{}:{}", appId, responseJson);
 					flag = false;
 				} else {
 					flag = true;
 				}
 			}
 		} catch (Exception e) {
-			logger.error("request error:{}", appId);
-			logger.error("request error", e);
+			logger.error("Request error:{}", appId);
+			logger.error("Request error", e);
 			flag = false;
 		}finally{
 			if(post != null){
@@ -207,8 +207,8 @@ public class FraudDataTraceMain {
 					post.releaseConnection();
 					Thread.sleep(100);
 				} catch (InterruptedException e) {
-					logger.error("request error:{}", appId);
-					logger.error("request error", e);
+					logger.error("Request error:{}", appId);
+					logger.error("Request error", e);
 				}
 			}
 		}
