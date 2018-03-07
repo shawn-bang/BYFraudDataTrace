@@ -175,7 +175,7 @@ public class FraudDataTraceMain {
 			post = new HttpPost(serviceUrl);
 			// construct message headers
 			post.setHeader("Content-type", "application/json; charset=utf-8");
-			post.setHeader("Connection", "Close");
+			post.setHeader("Connection", "close");
 			// construct message entity
 			StringEntity entity = new StringEntity(json, Charset.forName("UTF-8"));
 			entity.setContentEncoding("UTF-8");
