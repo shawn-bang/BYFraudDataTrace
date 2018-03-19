@@ -16,8 +16,10 @@ import java.io.*;
 import java.nio.charset.Charset;
 import java.util.*;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,8 +36,10 @@ public class FraudDataTraceMain {
 	private static String serviceUrl = "";
 	private static Map<String, String> AF1001 = null;
 	private static Map<String, String> AF1002 = null;
+	private final static ReentrantLock lock = new ReentrantLock();
 	private static int totalCount = 0, successCount = 0, failCount = 0;
-	private static Executor executor = Executors.newFixedThreadPool(2 * Runtime.getRuntime().availableProcessors());
+	private static int sliceCount = 5;
+	private static ExecutorService executorService = Executors.newFixedThreadPool(2 * Runtime.getRuntime().availableProcessors());
 
 	/**
 	 * 解析单个日志文件
@@ -45,7 +49,7 @@ public class FraudDataTraceMain {
 	private static void traceSingleLogFile(String fileName, String content){
 		// 使用正则表达式按日志记录时间顺序提取请求json报文
 		List<String> inputJsons = regexMatcher(content, "(getInputJson\\:)(\\{(.*?)\\}\\})\n");
-		logger.info("{}:request count:{}:{}", fileName, inputJsons.size());
+		logger.info("{}:request count:{}", fileName, inputJsons.size());
 
 		// init map:just once
 		if (AF1001 == null) AF1001 = new HashMap<>();
@@ -75,7 +79,7 @@ public class FraudDataTraceMain {
 	/**
 	 * 读取指定路径下的日志文件
 	 */
-	private static void readLogFiles(){
+	private static void readLogFiles() throws InterruptedException {
 		// 循环读取所有日志文件
 		File directory = new File(logFilesPath);
 		if (!directory.exists()){
@@ -109,12 +113,12 @@ public class FraudDataTraceMain {
 		long startTime1001 = System.currentTimeMillis();
 		doRequestService(AF1001);
 		long endTime1001 = System.currentTimeMillis();
-		logger.info("AF1001 run end:{}", (endTime1001 - startTime1001) + "");
+		logger.info("AF1001 run end:{}", (endTime1001 - startTime1001) / 1000 + "");
 		logger.info("AF1002 run start");
 		long startTime1002 = System.currentTimeMillis();
 		doRequestService(AF1002);
 		long endTime1002 = System.currentTimeMillis();
-		logger.info("AF1002 run end:{}", (endTime1002 - startTime1002) + "");
+		logger.info("AF1002 run end:{}", (endTime1002 - startTime1002) / 1000 + "");
 		logger.info("Total request count:{}", totalCount);
 		logger.info("Success request count:{}", successCount);
 		logger.info("Fail request count:{}", failCount);
@@ -124,26 +128,26 @@ public class FraudDataTraceMain {
 	 * request target service and count
 	 * @param map
 	 */
-	private static void doRequestService(Map<String, String> map) {
+	private static void doRequestService(Map<String, String> map) throws InterruptedException {
 		int threadNum;
-		if (map.size() % 5 == 0) {
-			threadNum = map.size() / 5;
+		if (map.size() % sliceCount == 0) {
+			threadNum = map.size() / sliceCount;
 		}else {
-			threadNum = map.size() / 5 + 1;
+			threadNum = map.size() / sliceCount + 1;
 		}
-		ThreadListener listener = new ThreadListener(threadNum);//线程监视器
 
 		List<Map<String, String>> l = splitMap(map);
 		for (int i = 0; i < threadNum; i++) {
-			executor.execute(new DoPostServiceThread(l.get(i), listener));
+			executorService.execute(new DoPostServiceThread(l.get(i)));
 		}
 
-		//等待所有线程执行完毕，返回对象
-		logger.info("等待所有线程都结束================================");
-		if (listener.isAllThreadsFinished()) {
-
-		} else {
-			throw new RuntimeException("有线程没有正常结束");
+		executorService.shutdown();
+		while(true){
+			if(executorService.isTerminated()){
+				logger.info("All Threads runing over!");
+				break;
+			}
+			Thread.sleep(200);
 		}
 	}
 
@@ -156,7 +160,7 @@ public class FraudDataTraceMain {
 			count++;
 			if (divMap == null) divMap = new HashMap<>();
 			divMap.put(entry.getKey(), entry.getValue());
-			if (count % 5 == 0 && count != map.size()) {
+			if (count % sliceCount == 0 && count != map.size()) {
 				l.add(divMap);
 				divMap = new HashMap<>();
 			}
@@ -173,7 +177,7 @@ public class FraudDataTraceMain {
 	 * @param args
 	 * @throws IOException
 	 */
-	public static void main(String args[]) throws IOException {
+	public static void main(String args[]) throws IOException, InterruptedException {
 		logger.info("Jar running start.");
 		Properties properties = new Properties();
 		properties.load(FraudDataTraceMain.class.getClassLoader().getResourceAsStream("config.properties"));
@@ -205,38 +209,36 @@ public class FraudDataTraceMain {
 	static class DoPostServiceThread implements Runnable {
 
 		private Map<String, String> map;
-		private ThreadListener listener;
 
-		public DoPostServiceThread(Map<String, String> map, ThreadListener listener) {
+		public DoPostServiceThread(Map<String, String> map) {
 			this.map = map;
-			this.listener = listener;
 		}
 
 		@Override
 		public void run() {
-			logger.info("开启一个新的线程：" + Thread.currentThread().getName());
+			logger.info("Thread:{}-run start" + Thread.currentThread().getName());
 			long start_time = System.currentTimeMillis();
 
 			for (Map.Entry<String, String> entry : map.entrySet()) {
+				lock.lock();
 				totalCount++;
+				lock.unlock();
 				String appId = entry.getKey();
 				String json = entry.getValue();
 				if (httpPostWithJson(json, appId)) {
+					lock.lock();
 					successCount++;
+					lock.unlock();
 				}else {
+					lock.lock();
 					failCount++;
+					lock.unlock();
 				}
 			}
 
-			logger.debug("====线程结束：" + Thread.currentThread().getName());
+			logger.info("Thread: {}-run over", Thread.currentThread().getName());
 			long end_time = System.currentTimeMillis();
-			logger.debug("耗时：" + (end_time - start_time) / 1000 + " 秒");
-			//监听线程之用
-			try {
-				listener.getQueue().put(Thread.currentThread().getName());
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
+			logger.info("Thread: {}-Cost:{}：", Thread.currentThread().getName(), (end_time - start_time) / 1000 + " 秒");
 		}
 
 		private boolean httpPostWithJson(String json, String appId){
@@ -295,38 +297,6 @@ public class FraudDataTraceMain {
 
 			return flag;
 		}
-	}
-
-	static class ThreadListener {
-		private LinkedBlockingQueue<String> queue = new LinkedBlockingQueue<>();//利用阻塞队列实现所有线程结束的监听
-		private int threadNum;//线程数目
-
-		ThreadListener(int threadNum) {
-			this.threadNum = threadNum;
-		}
-
-		LinkedBlockingQueue<String> getQueue() {
-			return queue;
-		}
-
-		/**
-		 * 判断是否所有线程都程结束
-		 *
-		 * @return
-		 */
-		boolean isAllThreadsFinished() {
-			for (int i = 0; i < threadNum; i++) {
-				try {
-					String threadName = queue.take();
-					logger.info(threadName + " 线程结束");
-				} catch (InterruptedException e) {
-					e.printStackTrace();
-					return false;
-				}
-			}
-			return true;
-		}
-
 	}
 
 }
