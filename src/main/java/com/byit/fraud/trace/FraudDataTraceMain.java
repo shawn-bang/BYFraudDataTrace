@@ -43,8 +43,7 @@ public class FraudDataTraceMain {
 		public Thread newThread(Runnable r) {
 			// Name threads
 			Thread thread = new Thread(Thread.currentThread().getThreadGroup(), r, "pool-data-trace" + threadNumber.getAndIncrement(), 0);
-			// Make workers daemon threads.
-			thread.setDaemon(true);
+			thread.setDaemon(false);
 			if (thread.getPriority() != Thread.NORM_PRIORITY) {
 				thread.setPriority(Thread.NORM_PRIORITY);
 			}
