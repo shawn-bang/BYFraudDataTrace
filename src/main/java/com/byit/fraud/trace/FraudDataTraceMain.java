@@ -15,10 +15,8 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.charset.Charset;
 import java.util.*;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -34,12 +32,26 @@ public class FraudDataTraceMain {
 	private static final Logger logger = LoggerFactory.getLogger(FraudDataTraceMain.class);
 	private static String logFilesPath = "";
 	private static String serviceUrl = "";
+	private static final String SUCCESS_STATUS = "1";
 	private static Map<String, String> AF1001 = null;
 	private static Map<String, String> AF1002 = null;
-	private final static ReentrantLock lock = new ReentrantLock();
-	private static int totalCount = 0, successCount = 0, failCount = 0;
-	private static int sliceCount = 5;
-	private static ExecutorService executorService = Executors.newFixedThreadPool(2 * Runtime.getRuntime().availableProcessors());
+	private final static ReentrantLock LOCK = new ReentrantLock();
+	private static int totalCount = 0, successCount = 0, failCount = 0, sliceCount = 5;
+	private static ThreadFactory namedThreadFactory = new ThreadFactory() {
+		final AtomicInteger threadNumber = new AtomicInteger(1);
+		@Override
+		public Thread newThread(Runnable r) {
+			// Name threads
+			Thread thread = new Thread(Thread.currentThread().getThreadGroup(), r, "pool-data-trace" + threadNumber.getAndIncrement(), 0);
+			// Make workers daemon threads.
+			thread.setDaemon(true);
+			if (thread.getPriority() != Thread.NORM_PRIORITY) {
+				thread.setPriority(Thread.NORM_PRIORITY);
+			}
+			return thread;
+		}
+	};
+	private static ExecutorService executorService = new ThreadPoolExecutor(8, 32, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(1024), namedThreadFactory, new ThreadPoolExecutor.AbortPolicy());
 
 	/**
 	 * 解析单个日志文件
@@ -52,8 +64,12 @@ public class FraudDataTraceMain {
 		logger.info("{}:request count:{}", fileName, inputJsons.size());
 
 		// init map:just once
-		if (AF1001 == null) AF1001 = new HashMap<>();
-		if (AF1002 == null) AF1002 = new HashMap<>();
+		if (AF1001 == null) {
+			AF1001 = new HashMap<>(16);
+		}
+		if (AF1002 == null) {
+			AF1002 = new HashMap<>(16);
+		}
 
 		// According to fromflowpoint to slice
 		int count1001 = 0, count1002 = 0;
@@ -88,11 +104,15 @@ public class FraudDataTraceMain {
 		File[] files = directory.listFiles();
 		logger.info("The directory contains {} files", files.length);
 
-		if (files.length == 0) return;
+		if (files.length == 0) {
+			return;
+		}
 
 		for (File file : files) {
 			try {
-				if (file.isDirectory()) continue;
+				if (file.isDirectory()) {
+					continue;
+				}
 				String fileName = file.getName();
 				logger.info("read log file start:{}", fileName);
 				BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)));
@@ -152,17 +172,21 @@ public class FraudDataTraceMain {
 	}
 
 	private static List<Map<String, String>> splitMap(Map<String, String> map) {
-		if (null == map || map.size() == 0) return null;
+		if (null == map || map.size() == 0) {
+			return null;
+		}
 		int count = 0;
 		List<Map<String, String>> l = new ArrayList<>();
 		Map<String, String> divMap = null;
 		for (Map.Entry<String, String> entry : map.entrySet()) {
 			count++;
-			if (divMap == null) divMap = new HashMap<>();
+			if (divMap == null) {
+				divMap = new HashMap<>(16);
+			}
 			divMap.put(entry.getKey(), entry.getValue());
 			if (count % sliceCount == 0 && count != map.size()) {
 				l.add(divMap);
-				divMap = new HashMap<>();
+				divMap = new HashMap<>(16);
 			}
 			if (count == map.size()) {
 				l.add(divMap);
@@ -217,28 +241,28 @@ public class FraudDataTraceMain {
 		@Override
 		public void run() {
 			logger.info("Thread:{}-run start" + Thread.currentThread().getName());
-			long start_time = System.currentTimeMillis();
+			long startTime = System.currentTimeMillis();
 
 			for (Map.Entry<String, String> entry : map.entrySet()) {
-				lock.lock();
+				LOCK.lock();
 				totalCount++;
-				lock.unlock();
+				LOCK.unlock();
 				String appId = entry.getKey();
 				String json = entry.getValue();
 				if (httpPostWithJson(json, appId)) {
-					lock.lock();
+					LOCK.lock();
 					successCount++;
-					lock.unlock();
+					LOCK.unlock();
 				}else {
-					lock.lock();
+					LOCK.lock();
 					failCount++;
-					lock.unlock();
+					LOCK.unlock();
 				}
 			}
 
 			logger.info("Thread: {}-run over", Thread.currentThread().getName());
-			long end_time = System.currentTimeMillis();
-			logger.info("Thread: {}-Cost:{}：", Thread.currentThread().getName(), (end_time - start_time) / 1000 + " 秒");
+			long endTime = System.currentTimeMillis();
+			logger.info("Thread: {}-Cost:{}：", Thread.currentThread().getName(), (endTime - startTime) / 1000 + " 秒");
 		}
 
 		private boolean httpPostWithJson(String json, String appId){
@@ -272,7 +296,7 @@ public class FraudDataTraceMain {
 				}else {
 					String responseJson = response.getEntity().toString();
 					String status = JSON.parseObject(responseJson).getJSONObject("response").getString("status");
-					if (!status.equals("1")) {
+					if (!SUCCESS_STATUS.equals(status)) {
 						logger.warn("Response result status exception:{}:{}", appId, responseJson);
 						flag = false;
 					} else {
